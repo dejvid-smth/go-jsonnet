@@ -29,3 +29,10 @@ def jsonnet_go_repositories():
         strip_prefix = "bazel-gazelle-38bd65ead186af23549480d6189b89c7c53c023e",
         urls = ["https://github.com/bazelbuild/bazel-gazelle/archive/38bd65ead186af23549480d6189b89c7c53c023e.zip"],
     )
+    _maybe(
+        http_archive,
+        name = "cpp_jsonnet",
+        sha256 = "076b52edf888c01097010ad4299e3b2e7a72b60a41abbc65af364af1ed3c8dbe",
+        strip_prefix = "jsonnet-0.17.0",
+        urls = ["https://github.com/google/jsonnet/archive/v0.17.0.tar.gz"],
+    )
