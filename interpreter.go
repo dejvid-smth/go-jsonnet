@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"sort"
 	"strconv"
 
 	"github.com/google/go-jsonnet/ast"
@@ -364,7 +363,7 @@ func (i *interpreter) evaluate(a ast.Node, tc tailCallStatus) (value, error) {
 
 	case *ast.DesugaredObject:
 		// Evaluate all the field names.  Check for null, dups, etc.
-		fields := make(simpleObjectFieldMap)
+		fields := NewSimpleObjectFieldMap()
 		for _, field := range node.Fields {
 			fieldNameValue, err := i.evaluate(field.Name, nonTailCall)
 			if err != nil {
@@ -381,14 +380,14 @@ func (i *interpreter) evaluate(a ast.Node, tc tailCallStatus) (value, error) {
 				return nil, i.Error(fmt.Sprintf("Field name must be string, got %v", fieldNameValue.getType().name), trace)
 			}
 
-			if _, ok := fields[fieldName]; ok {
+			if _, ok := fields.Get(fieldName); ok {
 				return nil, i.Error(duplicateFieldNameErrMsg(fieldName), trace)
 			}
 			var f unboundField = &codeUnboundField{field.Body}
 			if field.PlusSuper {
 				f = &plusSuperUnboundField{f}
 			}
-			fields[fieldName] = simpleObjectField{field.Hide, f}
+			fields.Set(fieldName, simpleObjectField{field.Hide, f})
 		}
 		var asserts []unboundField
 		for _, assert := range node.Asserts {
@@ -399,7 +398,8 @@ func (i *interpreter) evaluate(a ast.Node, tc tailCallStatus) (value, error) {
 			locals = append(locals, objectLocal{name: local.Variable, node: local.Body})
 		}
 		upValues := i.stack.capture(node.FreeVariables())
-		return makeValueSimpleObject(upValues, fields, asserts, locals), nil
+
+		return makeValueSimpleObject(upValues, *fields, asserts, locals), nil
 
 	case *ast.Error:
 		msgVal, err := i.evaluate(node.Expr, nonTailCall)
@@ -623,6 +623,34 @@ func unparseNumber(v float64) string {
 	return fmt.Sprintf("%.17g", v)
 }
 
+type jsonObjectFieldMap struct {
+	m    map[string]interface{}
+	keys []string
+}
+
+func NewJSONObjectFieldMap() *jsonObjectFieldMap {
+	return &jsonObjectFieldMap{
+		m: make(map[string]interface{}),
+	}
+}
+
+func (s *jsonObjectFieldMap) Set(k string, v interface{}) {
+	_, present := s.m[k]
+	s.m[k] = v
+	if !present {
+		s.keys = append(s.keys, k)
+	}
+}
+
+func (s *jsonObjectFieldMap) Keys() []string {
+	return s.keys
+}
+
+func (s *jsonObjectFieldMap) Get(k string) (interface{}, bool) {
+	v, present := s.m[k]
+	return v, present
+}
+
 // manifestJSON converts to standard JSON representation as in "encoding/json" package
 func (i *interpreter) manifestJSON(trace traceElement, v value) (interface{}, error) {
 	switch v := v.(type) {
@@ -659,14 +687,14 @@ func (i *interpreter) manifestJSON(trace traceElement, v value) (interface{}, er
 
 	case *valueObject:
 		fieldNames := objectFields(v, withoutHidden)
-		sort.Strings(fieldNames)
+		//sort.Strings(fieldNames)
 
 		err := checkAssertions(i, trace, v)
 		if err != nil {
 			return nil, err
 		}
 
-		result := make(map[string]interface{})
+		result := NewJSONObjectFieldMap()
 
 		for _, fieldName := range fieldNames {
 			fieldVal, err := v.index(i, trace, fieldName)
@@ -678,7 +706,7 @@ func (i *interpreter) manifestJSON(trace traceElement, v value) (interface{}, er
 			if err != nil {
 				return nil, err
 			}
-			result[fieldName] = field
+			result.Set(fieldName, field)
 		}
 
 		return result, nil
@@ -737,12 +765,12 @@ func serializeJSON(v interface{}, multiline bool, indent string, buf *bytes.Buff
 	case float64:
 		buf.WriteString(unparseNumber(v))
 
-	case map[string]interface{}:
-		fieldNames := make([]string, 0, len(v))
-		for name := range v {
-			fieldNames = append(fieldNames, name)
-		}
-		sort.Strings(fieldNames)
+	case *jsonObjectFieldMap:
+		fieldNames := v.Keys()
+		//for name := range v {
+		//	fieldNames = append(fieldNames, name)
+		//}
+		//sort.Strings(fieldNames)
 
 		if len(fieldNames) == 0 {
 			buf.WriteString("{ }")
@@ -757,7 +785,7 @@ func serializeJSON(v interface{}, multiline bool, indent string, buf *bytes.Buff
 				indent2 = indent
 			}
 			for _, fieldName := range fieldNames {
-				fieldVal := v[fieldName]
+				fieldVal, _ := v.Get(fieldName)
 
 				buf.WriteString(prefix)
 				buf.WriteString(indent2)
@@ -1115,7 +1143,7 @@ func buildStdObject(i *interpreter) (*valueObject, error) {
 	}
 
 	for name, value := range builtinFields {
-		obj.fields[name] = simpleObjectField{ast.ObjectFieldHidden, value}
+		obj.fields.Set(name, simpleObjectField{ast.ObjectFieldHidden, value})
 	}
 	return objVal.(*valueObject), nil
 }
@@ -1144,11 +1172,11 @@ func prepareExtVars(i *interpreter, ext vmExtMap, kind string) map[string]*cache
 }
 
 func buildObject(hide ast.ObjectFieldHide, fields map[string]value) *valueObject {
-	fieldMap := simpleObjectFieldMap{}
+	fieldMap := NewSimpleObjectFieldMap()
 	for name, v := range fields {
-		fieldMap[name] = simpleObjectField{hide, &readyValue{v}}
+		fieldMap.Set(name, simpleObjectField{hide, &readyValue{v}})
 	}
-	return makeValueSimpleObject(bindingFrame{}, fieldMap, nil, nil)
+	return makeValueSimpleObject(bindingFrame{}, *fieldMap, nil, nil)
 }
 
 func buildInterpreter(ext vmExtMap, nativeFuncs map[string]*NativeFunction, maxStack int, ic *importCache) (*interpreter, error) {

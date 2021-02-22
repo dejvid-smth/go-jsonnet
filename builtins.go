@@ -902,7 +902,7 @@ func builtinObjectFieldsEx(i *interpreter, trace traceElement, objv, includeHidd
 		return nil, err
 	}
 	fields := objectFields(obj, withHiddenFromBool(includeHidden.value))
-	sort.Strings(fields)
+	//sort.Strings(fields)
 	elems := []*cachedThunk{}
 	for _, fieldname := range fields {
 		elems = append(elems, readyThunk(makeValueString(fieldname)))
@@ -1110,7 +1110,7 @@ func builtinUglyObjectFlatMerge(i *interpreter, trace traceElement, x value) (va
 	if err != nil {
 		return nil, err
 	}
-	newFields := make(simpleObjectFieldMap)
+	newFields := NewSimpleObjectFieldMap()
 	var anyObj *simpleObject
 	for _, elem := range objarr.elements {
 		obj, err := i.evaluateObject(elem, trace)
@@ -1120,8 +1120,9 @@ func builtinUglyObjectFlatMerge(i *interpreter, trace traceElement, x value) (va
 		// starts getting ugly - we mess with object internals
 		simpleObj := obj.uncached.(*simpleObject)
 		// there is only one field, really
-		for fieldName, fieldVal := range simpleObj.fields {
-			if _, alreadyExists := newFields[fieldName]; alreadyExists {
+		for _, fieldName := range simpleObj.fields.Keys() {
+			fieldVal, _ := simpleObj.fields.Get(fieldName)
+			if _, alreadyExists := newFields.Get(fieldName); alreadyExists {
 				return nil, i.Error(duplicateFieldNameErrMsg(fieldName), trace)
 			}
 
@@ -1135,13 +1136,13 @@ func builtinUglyObjectFlatMerge(i *interpreter, trace traceElement, x value) (va
 				delete(upValues, l.name)
 			}
 
-			newFields[fieldName] = simpleObjectField{
+			newFields.Set(fieldName, simpleObjectField{
 				hide: fieldVal.hide,
 				field: &bindingsUnboundField{
 					inner:    fieldVal.field,
 					bindings: simpleObj.upValues,
 				},
-			}
+			})
 		}
 		anyObj = simpleObj
 	}
@@ -1158,7 +1159,7 @@ func builtinUglyObjectFlatMerge(i *interpreter, trace traceElement, x value) (va
 
 	return makeValueSimpleObject(
 		localUpValues,
-		newFields,
+		*newFields,
 		[]unboundField{}, // No asserts allowed
 		locals,
 	), nil

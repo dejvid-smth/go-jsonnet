@@ -605,7 +605,35 @@ func makeValueSimpleObject(b bindingFrame, fields simpleObjectFieldMap, asserts 
 	}
 }
 
-type simpleObjectFieldMap map[string]simpleObjectField
+type simpleObjectFieldMap struct {
+	m    map[string]simpleObjectField
+	keys []string
+}
+
+func NewSimpleObjectFieldMap() *simpleObjectFieldMap {
+	return &simpleObjectFieldMap{
+		m: make(map[string]simpleObjectField),
+	}
+}
+
+func (s *simpleObjectFieldMap) Set(k string, v simpleObjectField) {
+	_, present := s.m[k]
+	s.m[k] = v
+	if !present {
+		s.keys = append(s.keys, k)
+	}
+}
+
+func (s *simpleObjectFieldMap) Keys() []string {
+	return s.keys
+}
+
+func (s *simpleObjectFieldMap) Get(k string) (simpleObjectField, bool) {
+	v, present := s.m[k]
+	return v, present
+}
+
+//type simpleObjectFieldMap map[string]simpleObjectField
 
 type simpleObjectField struct {
 	hide  ast.ObjectFieldHide
@@ -672,7 +700,7 @@ func findField(curr uncachedObject, minSuperDepth int, f string) (bool, simpleOb
 
 	case *simpleObject:
 		if minSuperDepth <= 0 {
-			if field, ok := curr.fields[f]; ok {
+			if field, ok := curr.fields.Get(f); ok {
 				return true, field, curr.upValues, curr.locals, 0
 			}
 		}
@@ -741,41 +769,71 @@ func objectHasField(sb selfBinding, fieldName string, h hidden) bool {
 	return true
 }
 
-type fieldHideMap map[string]ast.ObjectFieldHide
+type fieldHideMap struct {
+	m    map[string]ast.ObjectFieldHide
+	keys []string
+}
 
-func uncachedObjectFieldsVisibility(obj uncachedObject) fieldHideMap {
-	r := make(fieldHideMap)
+func NewFieldHideMap() *fieldHideMap {
+	return &fieldHideMap{
+		m: make(map[string]ast.ObjectFieldHide),
+	}
+}
+
+func (s *fieldHideMap) Set(k string, v ast.ObjectFieldHide) {
+	_, present := s.m[k]
+	s.m[k] = v
+	if !present {
+		s.keys = append(s.keys, k)
+	}
+}
+
+func (s *fieldHideMap) Keys() []string {
+	return s.keys
+}
+
+func (s *fieldHideMap) Get(k string) (ast.ObjectFieldHide, bool) {
+	v, present := s.m[k]
+	return v, present
+}
+
+func uncachedObjectFieldsVisibility(obj uncachedObject) *fieldHideMap {
+	r := NewFieldHideMap()
 	switch obj := obj.(type) {
 	case *extendedObject:
 		r = uncachedObjectFieldsVisibility(obj.left)
 		rightMap := uncachedObjectFieldsVisibility(obj.right)
-		for k, v := range rightMap {
+		for _, k := range rightMap.Keys() {
+			v, _ := rightMap.Get(k)
 			if v == ast.ObjectFieldInherit {
-				if _, alreadyExists := r[k]; !alreadyExists {
-					r[k] = v
+				if _, alreadyExists := r.Get(k); !alreadyExists {
+					r.Set(k, v)
 				}
 			} else {
-				r[k] = v
+				r.Set(k, v)
 			}
 		}
 		return r
 
 	case *simpleObject:
-		for fieldName, field := range obj.fields {
-			r[fieldName] = field.hide
+		for _, fieldName := range obj.fields.Keys() {
+			field, _ := obj.fields.Get(fieldName)
+			r.Set(fieldName, field.hide)
 		}
 	}
 	return r
 }
 
-func objectFieldsVisibility(obj *valueObject) fieldHideMap {
+func objectFieldsVisibility(obj *valueObject) *fieldHideMap {
 	return uncachedObjectFieldsVisibility(obj.uncached)
 }
 
 // Returns field names of an object. Gotcha: the order of fields is unpredictable.
 func objectFields(obj *valueObject, h hidden) []string {
 	var r []string
-	for fieldName, hide := range objectFieldsVisibility(obj) {
+	fHideMap := objectFieldsVisibility(obj)
+	for _, fieldName := range fHideMap.Keys() {
+		hide, _ := fHideMap.Get(fieldName)
 		if h == withHidden || hide != ast.ObjectFieldHidden {
 			r = append(r, fieldName)
 		}
